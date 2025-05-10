@@ -1,0 +1,136 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/gpio.h"
+#include "esp_system.h"
+
+// Define the pins for relay, heater, and buzzer
+#define RELAY_PIN   23
+#define HEATER_PIN  2
+#define BUZZER_PIN  4
+
+// Temperature thresholds
+#define TEMP_LOW       30  // Heater ON below this temp
+#define TEMP_HIGH      50  // Target reached
+#define TEMP_OVERHEAT  60  // Overheat condition
+
+// Heater states
+typedef enum {
+    STATE_IDLE,
+    STATE_HEATING,
+    STATE_STABILIZING,
+    STATE_TARGET_REACHED,
+    STATE_OVERHEAT
+} heater_state_t;
+
+heater_state_t current_state = STATE_IDLE;
+
+// GPIO configuration
+void init_gpio()
+{
+    gpio_config_t io_conf = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin_bit_mask = (1ULL << RELAY_PIN) | (1ULL << HEATER_PIN) | (1ULL << BUZZER_PIN),
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE
+    };
+    gpio_config(&io_conf);
+}
+
+// Simulate ADC value (random between 0 and 4095)
+int read_temperature_raw()
+{
+    return rand() % 4096;
+}
+
+// Convert raw ADC value to temperature in Celsius (0-100°C scale)
+int convert_adc_to_temperature(int adc_val)
+{
+    return (adc_val * 100) / 4095;  // Scale the 0-4095 ADC value to 0-100°C
+}
+
+// Update the outputs based on the heater state
+void update_outputs(heater_state_t state)
+{
+    switch (state) {
+        case STATE_HEATING:
+            gpio_set_level(RELAY_PIN, 1);
+            gpio_set_level(HEATER_PIN, 1);
+            gpio_set_level(BUZZER_PIN, 0);
+            break;
+        case STATE_STABILIZING:
+        case STATE_TARGET_REACHED:
+            gpio_set_level(RELAY_PIN, 0);
+            gpio_set_level(HEATER_PIN, 0);
+            gpio_set_level(BUZZER_PIN, 0);
+            break;
+        case STATE_OVERHEAT:
+            gpio_set_level(RELAY_PIN, 0);
+            gpio_set_level(HEATER_PIN, 0);
+            gpio_set_level(BUZZER_PIN, 1);
+            break;
+        case STATE_IDLE:
+        default:
+            gpio_set_level(RELAY_PIN, 0);
+            gpio_set_level(HEATER_PIN, 0);
+            gpio_set_level(BUZZER_PIN, 0);
+            break;
+    }
+}
+
+// Main task that controls the heater
+void heater_task(void *arg)
+{
+    while (1) {
+        int adc_raw = read_temperature_raw();
+        int temp_c = convert_adc_to_temperature(adc_raw);
+        printf("Temperature: %d C | ", temp_c);
+
+        switch (current_state) {
+            case STATE_IDLE:
+                printf("State: IDLE\n");
+                if (temp_c < TEMP_LOW)
+                    current_state = STATE_HEATING;
+                break;
+
+            case STATE_HEATING:
+                printf("State: HEATING\n");
+                if (temp_c >= TEMP_HIGH)
+                    current_state = STATE_STABILIZING;
+                break;
+
+            case STATE_STABILIZING:
+                printf("State: STABILIZING\n");
+                current_state = STATE_TARGET_REACHED;
+                break;
+
+            case STATE_TARGET_REACHED:
+                printf("State: TARGET_REACHED\n");
+                if (temp_c > TEMP_OVERHEAT)
+                    current_state = STATE_OVERHEAT;
+                else if (temp_c < TEMP_LOW)
+                    current_state = STATE_HEATING;
+                break;
+
+            case STATE_OVERHEAT:
+                printf("State: OVERHEAT\n");
+                if (temp_c < TEMP_HIGH)
+                    current_state = STATE_IDLE;
+                break;
+        }
+
+        update_outputs(current_state);
+        vTaskDelay(pdMS_TO_TICKS(1000));  // Delay for 1 second
+    }
+}
+
+// Main entry point
+void app_main()
+{
+    srand((unsigned int) time(NULL));  // Seed the random number generator
+    init_gpio();  // Initialize GPIO
+    xTaskCreate(heater_task, "heater_task", 2048, NULL, 5, NULL);  // Create task
+}
