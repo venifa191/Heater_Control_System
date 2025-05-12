@@ -4,12 +4,14 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
+#include "driver/adc.h"
 #include "esp_system.h"
 
 // Define the pins for relay, heater, and buzzer
 #define RELAY_PIN   23
 #define HEATER_PIN  2
 #define BUZZER_PIN  4
+#define SENSOR_PIN  34  // ADC input pin
 
 // Temperature thresholds
 #define TEMP_LOW       30  // Heater ON below this temp
@@ -30,6 +32,7 @@ heater_state_t current_state = STATE_IDLE;
 // GPIO configuration
 void init_gpio()
 {
+    // Configure output pins
     gpio_config_t io_conf = {
         .mode = GPIO_MODE_OUTPUT,
         .pin_bit_mask = (1ULL << RELAY_PIN) | (1ULL << HEATER_PIN) | (1ULL << BUZZER_PIN),
@@ -38,18 +41,22 @@ void init_gpio()
         .intr_type = GPIO_INTR_DISABLE
     };
     gpio_config(&io_conf);
+
+    // Configure ADC for SENSOR_PIN (GPIO34 = ADC1_CHANNEL_6)
+    adc1_config_width(ADC_WIDTH_BIT_12);
+    adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_11);
 }
 
-// Simulate ADC value (random between 0 and 4095)
+// Read temperature from ADC
 int read_temperature_raw()
 {
-    return rand() % 4096;
+    return adc1_get_raw(ADC1_CHANNEL_6);  // GPIO34
 }
 
-// Convert raw ADC value to temperature in Celsius (0-100°C scale)
+// Convert raw ADC value to temperature in Celsius (0–100°C scale)
 int convert_adc_to_temperature(int adc_val)
 {
-    return (adc_val * 100) / 4095;  // Scale the 0-4095 ADC value to 0-100°C
+    return (adc_val * 100) / 4095;  // Scale the 0–4095 ADC value to 0–100°C
 }
 
 // Update the outputs based on the heater state
@@ -130,7 +137,6 @@ void heater_task(void *arg)
 // Main entry point
 void app_main()
 {
-    srand((unsigned int) time(NULL));  // Seed the random number generator
-    init_gpio();  // Initialize GPIO
+    init_gpio();  // Initialize GPIO and ADC
     xTaskCreate(heater_task, "heater_task", 2048, NULL, 5, NULL);  // Create task
 }
